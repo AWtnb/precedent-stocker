@@ -10,6 +10,11 @@ const MAIN_SHEET = SHEET.getSheets()[0];
 const LOG_SHEET = SHEET.getSheets()[1];
 const MAIL_TO = getProperty("MAIL_TO");
 
+const DATA_SHEET_ID = getProperty("DATA_SHEET_ID");
+const DATA_SHEET = SpreadsheetApp.openById(DATA_SHEET_ID);
+const COURT_DATA_SHEET = DATA_SHEET.getSheets()[0];
+const SIGN_DATA_SHEET = DATA_SHEET.getSheets()[1];
+
 const BASE_URL = "https://www.courts.go.jp/hanrei/";
 const CASE_NUMBER_COLUMN = 2; // B列
 
