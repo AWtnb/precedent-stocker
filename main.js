@@ -1,25 +1,3 @@
-/*
-MAIN_SHEETはヘッダなしで、A列に10000～の数値が入っている。
-以下のscrape を数分に1回のペースで定期的に実行し、B列以降を埋めていく。
-LOG_SHEETは最初の時点では何もデータが入っていない。
-
-scpateがすること：
-log_sheetのA1を見に行く
-→空欄ならとりあえず10000を取得したことにする
-→MAIN_SHEETのA列がその値の行を見に行く
-→その行がA列以外空欄なら、その値を `https://www.courts.go.jp/hanrei/XXXXX/detail7/index.html` の `XXXXX` に入れてアクセスし、特定要素をスクレイピングしてB~E列に保存
-→もしA列以外が既に埋まっていたら（その行をスクレイピング済みだったら）行を下に見て行き、A列しか埋まっていない行を探す
-→行が見つかったらその行のA列の値を前記URLの `XXXXX` に入れて同じことをする。
-→いずれの場合も、スクレイピングが終わったらその行の番号をLOG_SHEETのA1に記録しておく
-→もし最終行まで見ても「A列以外が空欄」の行がなく、かつ今回の探索が先頭行から始まっていた場合（＝全行を1周確認した結果）、 `MAIL_TO` にメール通知する
-→スクレイピングした行がシートの最終行だった場合、次回以降はまたシートの先頭（10000）から見ていく
-→行の番号によってはURLが404になることがあるが、どこかのタイミングでページが作成されることがある。なので、このように再度ループすることでチェックしなおすことが可能になる。
-
-【高速化について】
-行数が数万件規模になる可能性があるため、B列に対してTextFinderを使い、
-スプレッドシート側で空白セル検索を行うことで、全行のgetValues()による読み込みを避けている。
-*/
-
 const getProperty = (key) => {
   const value = PropertiesService.getScriptProperties().getProperty(key);
   if (!value) throw new Error(`Property not found: ${key}`);
@@ -46,6 +24,8 @@ const FIELD_COLUMNS = [
 /**
  * 指定した判例番号のページHTMLを取得する
  * 404などのエラーもレスポンスとしてそのまま返す
+ * @param {number|string} caseNumber - 判例番号（URLのXXXXX部分）
+ * @returns {GoogleAppsScript.URL_Fetch.HTTPResponse} レスポンス
  */
 const fetchResponse = (caseNumber) => {
   const url = `${BASE_URL}${caseNumber}/detail7/index.html`;
@@ -54,6 +34,9 @@ const fetchResponse = (caseNumber) => {
 
 /**
  * HTML内の module-sub-page-parts-table ブロックをすべて抜き出す
+ * 同じクラス名のブロックがページ内に複数存在する場合があるため、iterateで全件取得する
+ * @param {string} html - ページ全体のHTML文字列
+ * @returns {string[]} 各テーブルブロックのHTML文字列配列
  */
 const extractTableBlocks = (html) =>
   Parser.data(html).iterate(
@@ -63,7 +46,9 @@ const extractTableBlocks = (html) =>
 
 /**
  * 1つのテーブルブロックからdt/ddのラベルと値のマップを抽出する
- * dlの順番が不定・一部欠落があっても対応できるよう、dtのテキストをキーにする
+ * dlの出現順が不定・一部欠落があっても対応できるよう、dtのテキストをキーにする
+ * @param {string} tableBlock - module-sub-page-parts-table 1件分のHTML文字列
+ * @returns {Object<string, string>} ラベルをキー、値を値とするマップ
  */
 const extractFieldMap = (tableBlock) => {
   const dlBlocks = Parser.data(tableBlock).iterate("<dl>", "</dl>");
@@ -81,8 +66,10 @@ const extractFieldMap = (tableBlock) => {
 };
 
 /**
- * 「事件番号」「事件名」「裁判年月日」「裁判所名」の4項目がすべて揃っているテーブルブロックを探し、
- * 見つかればそのfieldMapを返す。見つからなければnullを返す
+ * 「事件番号」「事件名」「裁判年月日」「裁判所名」の4項目がすべて揃っているテーブルブロックを探す
+ * ページ内に同種のテーブルが複数存在する場合があるため、4項目が揃うブロックのみを対象とする
+ * @param {string} html - ページ全体のHTML文字列
+ * @returns {Object<string, string>|null} 4項目揃ったfieldMap。見つからなければnull
  */
 const findTargetFieldMap = (html) => {
   const tableBlocks = extractTableBlocks(html);
@@ -97,8 +84,9 @@ const findTargetFieldMap = (html) => {
 };
 
 /**
- * LOG_SHEETのA1から前回処理した行番号を取得する
+ * LOG_SHEETのA1から前回処理した行番号（次回の探索開始行）を取得する
  * 空欄なら1行目（先頭）として扱う
+ * @returns {number} 探索を開始する行番号（1始まり）
  */
 const getLastRowIndex = () => {
   const value = LOG_SHEET.getRange("A1").getValue();
@@ -107,7 +95,9 @@ const getLastRowIndex = () => {
 };
 
 /**
- * LOG_SHEETのA1に処理済み行番号を記録する
+ * LOG_SHEETのA1に次回の探索開始行を記録する
+ * @param {number} rowIndex - 記録する行番号（1始まり）
+ * @returns {void}
  */
 const setLastRowIndex = (rowIndex) => {
   LOG_SHEET.getRange("A1").setValue(rowIndex);
@@ -115,9 +105,12 @@ const setLastRowIndex = (rowIndex) => {
 
 /**
  * B列（事件番号列）に対してTextFinderで完全一致の空白セルを検索し、
- * startRow以降で最初に見つかった行番号を返す。見つからなければnullを返す
- *
+ * startRow以降で最初に見つかった行番号を返す
  * B列が空欄 = A列しか埋まっていない未処理行、という前提に基づく判定
+ * 全行をgetValuesで読み込まず、検索自体をスプレッドシート側に任せることで高速化している
+ * @param {number} startRow - 検索を開始する行番号（1始まり）
+ * @param {number} lastRow - シートの最終行番号
+ * @returns {number|null} 見つかった行番号。見つからなければnull
  */
 const findFirstUnscrapedRow = (startRow, lastRow) => {
   if (lastRow < startRow) return null;
@@ -140,6 +133,7 @@ const findFirstUnscrapedRow = (startRow, lastRow) => {
 
 /**
  * これ以上スクレイピングする必要がない旨をメール通知する
+ * @returns {void}
  */
 const notifyAllScraped = () => {
   MailApp.sendEmail({
@@ -149,6 +143,19 @@ const notifyAllScraped = () => {
   });
 };
 
+/**
+ * MAIN_SHEETの未処理行を1件見つけて判例情報をスクレイピングし、B〜E列に書き込む
+ *
+ * 処理の流れ:
+ * 1. LOG_SHEETのA1から探索開始行を取得する
+ * 2. TextFinderでB列が空欄の行（未処理行）を探す
+ * 3. 見つかった場合はページにアクセスし、4項目すべて取得できればB〜E列に書き込む
+ *    （404や項目不足の場合は書き込まず、次回以降に再チェックされる）
+ * 4. 処理した行番号をLOG_SHEETのA1に記録する（最終行だった場合は1に戻す）
+ * 5. 未処理行が見つからず、かつ探索が1行目から始まっていた場合（全行を1周確認した場合）のみ
+ *    完了メールを送信する
+ * @returns {void}
+ */
 const scrape = () => {
   const lastRow = MAIN_SHEET.getLastRow();
   if (lastRow < 1) return;
