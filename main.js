@@ -14,6 +14,10 @@ log_sheetのA1を見に行く
 →もし最終行まで見ても「A列以外が空欄」の行がなく、かつ今回の探索が先頭行から始まっていた場合（＝全行を1周確認した結果）、 `MAIL_TO` にメール通知する
 →スクレイピングした行がシートの最終行だった場合、次回以降はまたシートの先頭（10000）から見ていく
 →行の番号によってはURLが404になることがあるが、どこかのタイミングでページが作成されることがある。なので、このように再度ループすることでチェックしなおすことが可能になる。
+
+【高速化について】
+行数が数万件規模になる可能性があるため、B列に対してTextFinderを使い、
+スプレッドシート側で空白セル検索を行うことで、全行のgetValues()による読み込みを避けている。
 */
 
 const getProperty = (key) => {
@@ -29,6 +33,7 @@ const LOG_SHEET = SHEET.getSheets()[1];
 const MAIL_TO = getProperty("MAIL_TO");
 
 const BASE_URL = "https://www.courts.go.jp/hanrei/";
+const CASE_NUMBER_COLUMN = 2; // B列
 
 // スプレッドシートの列番号（B, C, D, E）とラベルの対応
 const FIELD_COLUMNS = [
@@ -109,13 +114,28 @@ const setLastRowIndex = (rowIndex) => {
 };
 
 /**
- * 指定行が未スクレイピング（B列以降が空欄）かどうかを判定する
+ * B列（事件番号列）に対してTextFinderで完全一致の空白セルを検索し、
+ * startRow以降で最初に見つかった行番号を返す。見つからなければnullを返す
+ *
+ * B列が空欄 = A列しか埋まっていない未処理行、という前提に基づく判定
  */
-const isUnscraped = (rowValues) => {
-  for (let i = 1; i < rowValues.length; i++) {
-    if (rowValues[i] !== "") return false;
-  }
-  return true;
+const findFirstUnscrapedRow = (startRow, lastRow) => {
+  if (lastRow < startRow) return null;
+
+  const searchRange = MAIN_SHEET.getRange(
+    startRow,
+    CASE_NUMBER_COLUMN,
+    lastRow - startRow + 1,
+    1,
+  );
+  const finder = searchRange
+    .createTextFinder("^$")
+    .matchEntireCell(true)
+    .useRegularExpression(true);
+  const foundCell = finder.findNext();
+  if (!foundCell) return null;
+
+  return foundCell.getRow();
 };
 
 /**
@@ -133,34 +153,20 @@ const scrape = () => {
   const lastRow = MAIN_SHEET.getLastRow();
   if (lastRow < 1) return;
 
-  const dataRange = MAIN_SHEET.getRange(
-    1,
-    1,
-    lastRow,
-    MAIN_SHEET.getLastColumn(),
-  );
-  const data = dataRange.getValues();
-
   const startRowIndex = getLastRowIndex();
-  const startIndex =
-    1 <= startRowIndex && startRowIndex <= lastRow ? startRowIndex - 1 : 0;
-  const isFullScan = startIndex === 0;
+  const startRow =
+    1 <= startRowIndex && startRowIndex <= lastRow ? startRowIndex : 1;
+  const isFullScan = startRow === 1;
 
-  let targetIndex = -1;
-  for (let i = startIndex; i < data.length; i++) {
-    if (!isUnscraped(data[i])) continue;
-    targetIndex = i;
-    break;
-  }
+  const targetRow = findFirstUnscrapedRow(startRow, lastRow);
 
-  if (targetIndex === -1) {
+  if (!targetRow) {
     // 先頭から探索して見つからなかった場合のみ、全行が埋まっていると確定できる
     if (isFullScan) notifyAllScraped();
     return;
   }
 
-  const caseNumber = data[targetIndex][0];
-  const targetRow = targetIndex + 1;
+  const caseNumber = MAIN_SHEET.getRange(targetRow, 1).getValue();
   const response = fetchResponse(caseNumber);
 
   if (response.getResponseCode() === 200) {
