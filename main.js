@@ -13,12 +13,12 @@ const MAIL_TO = getProperty("MAIL_TO");
 const BASE_URL = "https://www.courts.go.jp/hanrei/";
 const CASE_NUMBER_COLUMN = 2; // B列
 
-// スプレッドシートの列番号（B, C, D, E）とラベルの対応
+// スプレッドシートの列番号（B, C, D, E）と、対応するmeta要素のname属性の対応
 const FIELD_COLUMNS = [
-  { label: "事件番号", column: 2 },
-  { label: "事件名", column: 3 },
-  { label: "裁判年月日", column: 4 },
-  { label: "裁判所名", column: 5 },
+  { metaName: "composite_jiken_number", column: 2 }, // 事件番号
+  { metaName: "jiken_name", column: 3 }, // 事件名
+  { metaName: "judge_date_wareki", column: 4 }, // 裁判年月日
+  { metaName: "court_name", column: 5 }, // 裁判所名
 ];
 
 /**
@@ -33,55 +33,32 @@ const fetchResponse = (caseNumber) => {
 };
 
 /**
- * HTML内の module-sub-page-parts-table ブロックをすべて抜き出す
- * 同じクラス名のブロックがページ内に複数存在する場合があるため、iterateで全件取得する
+ * HTML内の <meta name="xxx" content="yyy"> からnameをキー、contentを値とするマップを作る
+ * ページ本体はJavaScriptで動的に組み立てられるため要素の直接取得はできないが、
+ * meta要素はサーバー側で埋め込まれるため確実に取得できる
  * @param {string} html - ページ全体のHTML文字列
- * @returns {string[]} 各テーブルブロックのHTML文字列配列
+ * @returns {Object<string, string>} meta要素のnameをキー、contentを値とするマップ
  */
-const extractTableBlocks = (html) =>
-  Parser.data(html).iterate(
-    '<div class="module-sub-page-parts-table">',
-    "</div>",
-  );
+const extractMetaMap = (html) => {
+  const metaMap = {};
+  const pattern = /<meta\s+name="([^"]+)"\s+content="([^"]*)"/g;
 
-/**
- * 1つのテーブルブロックからdt/ddのラベルと値のマップを抽出する
- * dlの出現順が不定・一部欠落があっても対応できるよう、dtのテキストをキーにする
- * @param {string} tableBlock - module-sub-page-parts-table 1件分のHTML文字列
- * @returns {Object<string, string>} ラベルをキー、値を値とするマップ
- */
-const extractFieldMap = (tableBlock) => {
-  const dlBlocks = Parser.data(tableBlock).iterate("<dl>", "</dl>");
-
-  const fieldMap = {};
-  for (const block of dlBlocks) {
-    const label = Parser.data(block).from("<dt>").to("</dt>").build().trim();
-    if (!label) continue;
-
-    const rawValue = Parser.data(block).from("<dd>").to("</dd>").build();
-    const value = rawValue.replace(/<[^>]*>/g, "").trim();
-    fieldMap[label] = value;
+  let match;
+  while ((match = pattern.exec(html))) {
+    const [, name, content] = match;
+    if (name in metaMap) continue; // 同名metaが複数ある場合は最初の値を優先
+    metaMap[name] = content;
   }
-  return fieldMap;
+  return metaMap;
 };
 
 /**
- * 「事件番号」「事件名」「裁判年月日」「裁判所名」の4項目がすべて揃っているテーブルブロックを探す
- * ページ内に同種のテーブルが複数存在する場合があるため、4項目が揃うブロックのみを対象とする
- * @param {string} html - ページ全体のHTML文字列
- * @returns {Object<string, string>|null} 4項目揃ったfieldMap。見つからなければnull
+ * meta要素のマップから、必要な4項目がすべて揃っているかを確認する
+ * @param {Object<string, string>} metaMap - extractMetaMapの返り値
+ * @returns {boolean} 4項目すべて値が入っていればtrue
  */
-const findTargetFieldMap = (html) => {
-  const tableBlocks = extractTableBlocks(html);
-
-  for (const tableBlock of tableBlocks) {
-    const fieldMap = extractFieldMap(tableBlock);
-    const hasAllFields = FIELD_COLUMNS.every(({ label }) => fieldMap[label]);
-    if (!hasAllFields) continue;
-    return fieldMap;
-  }
-  return null;
-};
+const hasAllFields = (metaMap) =>
+  FIELD_COLUMNS.every(({ metaName }) => metaMap[metaName]);
 
 /**
  * LOG_SHEETのA1から前回処理した行番号（次回の探索開始行）を取得する
@@ -146,7 +123,7 @@ const notifyAllScraped = () => {
  * 処理の流れ:
  * 1. LOG_SHEETのA1から探索開始行を取得する
  * 2. B列を読み込み、空欄の行（未処理行）を探す
- * 3. 見つかった場合はページにアクセスし、4項目すべて取得できればB〜E列に書き込む
+ * 3. 見つかった場合はページにアクセスし、meta要素から4項目すべて取得できればB〜E列に書き込む
  *    （404や項目不足の場合は書き込まず、次回以降に再チェックされる）
  * 4. 処理した行番号をLOG_SHEETのA1に記録する（最終行だった場合は1に戻す）
  * 5. 未処理行が見つからず、かつ探索が1行目から始まっていた場合（全行を1周確認した場合）のみ
@@ -174,15 +151,15 @@ const scrape = () => {
   const response = fetchResponse(caseNumber);
 
   if (response.getResponseCode() === 200) {
-    const fieldMap = findTargetFieldMap(response.getContentText("utf-8"));
+    const metaMap = extractMetaMap(response.getContentText());
 
-    if (fieldMap) {
-      for (const { label, column } of FIELD_COLUMNS) {
-        MAIN_SHEET.getRange(targetRow, column).setValue(fieldMap[label]);
+    if (hasAllFields(metaMap)) {
+      for (const { metaName, column } of FIELD_COLUMNS) {
+        MAIN_SHEET.getRange(targetRow, column).setValue(metaMap[metaName]);
       }
     }
   }
-  // 404、対象要素が見つからない、4項目が揃っていない場合は何も書き込まない
+  // 404、meta要素が見つからない、4項目が揃っていない場合は何も書き込まない
   // → 次回以降も未処理行として再チェック対象になる
 
   const nextRowIndex = targetRow < lastRow ? targetRow + 1 : 1;
