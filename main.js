@@ -104,10 +104,9 @@ const setLastRowIndex = (rowIndex) => {
 };
 
 /**
- * B列（事件番号列）に対してTextFinderで完全一致の空白セルを検索し、
- * startRow以降で最初に見つかった行番号を返す
+ * B列（事件番号列）を読み込み、startRow以降で最初に見つかった空欄行番号を返す
  * B列が空欄 = A列しか埋まっていない未処理行、という前提に基づく判定
- * 全行をgetValuesで読み込まず、検索自体をスプレッドシート側に任せることで高速化している
+ * B列1列のみを読み込むことで、全列読み込みに比べてデータ転送量を抑えている
  * @param {number} startRow - 検索を開始する行番号（1始まり）
  * @param {number} lastRow - シートの最終行番号
  * @returns {number|null} 見つかった行番号。見つからなければnull
@@ -115,20 +114,18 @@ const setLastRowIndex = (rowIndex) => {
 const findFirstUnscrapedRow = (startRow, lastRow) => {
   if (lastRow < startRow) return null;
 
-  const searchRange = MAIN_SHEET.getRange(
+  const values = MAIN_SHEET.getRange(
     startRow,
     CASE_NUMBER_COLUMN,
     lastRow - startRow + 1,
     1,
-  );
-  const finder = searchRange
-    .createTextFinder("^$")
-    .matchEntireCell(true)
-    .useRegularExpression(true);
-  const foundCell = finder.findNext();
-  if (!foundCell) return null;
+  ).getValues();
 
-  return foundCell.getRow();
+  for (let i = 0; i < values.length; i++) {
+    if (values[i][0] !== "") continue;
+    return startRow + i;
+  }
+  return null;
 };
 
 /**
@@ -148,7 +145,7 @@ const notifyAllScraped = () => {
  *
  * 処理の流れ:
  * 1. LOG_SHEETのA1から探索開始行を取得する
- * 2. TextFinderでB列が空欄の行（未処理行）を探す
+ * 2. B列を読み込み、空欄の行（未処理行）を探す
  * 3. 見つかった場合はページにアクセスし、4項目すべて取得できればB〜E列に書き込む
  *    （404や項目不足の場合は書き込まず、次回以降に再チェックされる）
  * 4. 処理した行番号をLOG_SHEETのA1に記録する（最終行だった場合は1に戻す）
@@ -177,7 +174,7 @@ const scrape = () => {
   const response = fetchResponse(caseNumber);
 
   if (response.getResponseCode() === 200) {
-    const fieldMap = findTargetFieldMap(response.getContentText());
+    const fieldMap = findTargetFieldMap(response.getContentText("utf-8"));
 
     if (fieldMap) {
       for (const { label, column } of FIELD_COLUMNS) {
