@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "checkJs": false,
+    "allowJs": true,
+    "lib": ["ES2019"],
+    "types": ["google-apps-script"]
+  },
+  "include": ["**/*.js"],
+  "exclude": ["node_modules", "build", ".git"]
+}
