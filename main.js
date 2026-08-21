@@ -30,12 +30,14 @@ const extractMetaMap = (html) => {
 };
 
 /**
- * meta要素のマップから、必要な4項目がすべて揃っているかを確認する
+ * meta要素のマップから、必要な3項目がすべて揃っているかを確認する
  * @param {Object<string, string>} metaMap - extractMetaMapの返り値
- * @returns {boolean} 4項目すべて値が入っていればtrue
+ * @returns {boolean} 「事件番号」「裁判年月日」「裁判所名」の3項目すべて値が入っていればtrue
  */
-const hasAllFields = (metaMap) =>
-  FIELD_COLUMNS.every(({ metaName }) => metaMap[metaName]);
+const isSufficient = (metaMap) =>
+  FIELD_COLUMNS.filter(({ metaName }) => metaName !== "jiken_name").every(
+    ({ metaName }) => metaMap[metaName],
+  );
 
 /**
  * LOG_SHEETのA1から前回処理した行番号（次回の探索開始行）を取得する
@@ -114,7 +116,7 @@ const scrape = () => {
   if (response.getResponseCode() === 200) {
     const metaMap = extractMetaMap(response.getContentText());
 
-    if (hasAllFields(metaMap)) {
+    if (isSufficient(metaMap)) {
       for (const { metaName, column } of FIELD_COLUMNS) {
         MAIN_SHEET.getRange(targetRow, column).setValue(metaMap[metaName]);
       }
