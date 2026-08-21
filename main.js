@@ -83,18 +83,6 @@ const findFirstUnscrapedRow = (startRow, lastRow) => {
 };
 
 /**
- * これ以上スクレイピングする必要がない旨をメール通知する
- * @returns {void}
- */
-const notifyAllScraped = () => {
-  MailApp.sendEmail({
-    to: MAIL_TO,
-    subject: "スクレイピング完了",
-    body: "MAIN_SHEETの全行のB列以降が埋まりました。これ以上スクレイピングする必要はありません。",
-  });
-};
-
-/**
  * MAIN_SHEETの未処理行を1件見つけて判例情報をスクレイピングし、B〜E列に書き込む
  *
  * 処理の流れ:
@@ -114,13 +102,9 @@ const scrape = () => {
   const startRowIndex = getLastRowIndex();
   const startRow =
     1 <= startRowIndex && startRowIndex <= lastRow ? startRowIndex : 1;
-  const isFullScan = startRow === 1;
 
   const targetRow = findFirstUnscrapedRow(startRow, lastRow);
-
   if (!targetRow) {
-    // 先頭から探索して見つからなかった場合のみ、全行が埋まっていると確定できる
-    if (isFullScan) notifyAllScraped();
     return;
   }
 
@@ -141,4 +125,44 @@ const scrape = () => {
 
   const nextRowIndex = targetRow < lastRow ? targetRow + 1 : 1;
   setLastRowIndex(nextRowIndex);
+};
+
+/**
+ * F列（判例ID）を取得し、すべて埋まっていたらメールで通知する
+ * @returns {void}
+ */
+const checkSheetFilled = () => {
+  const lastRow = MAIN_SHEET.getLastRow();
+  if (lastRow < 1) return;
+
+  const precCodeColumn = 6;
+  const precIDs = MAIN_SHEET.getRange(
+    1,
+    precCodeColumn,
+    lastRow,
+    1,
+  ).getValues();
+
+  let bottom = -1;
+  for (let i = 0; i < precIDs.length; i++) {
+    const [precID] = precIDs[i];
+    if (precID !== "") {
+      bottom = i + 1;
+    }
+  }
+
+  const mailSub =
+    bottom === lastRow
+      ? "最終行まで判例IDの発行が完了しました"
+      : `${bottom}行まで判例ID発行が済みました`;
+  const mailBody =
+    bottom === lastRow
+      ? "シートを更新してください："
+      : "引き続き作業を進めます：";
+
+  MailApp.sendEmail({
+    to: MAIL_TO,
+    subject: `[GAS]${mailSub}`,
+    body: `${mailBody}\n${SHEET.getUrl()}`,
+  });
 };
