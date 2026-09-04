@@ -103,13 +103,13 @@ const padZero2 = (value) => String(value).padStart(2, "0");
  */
 const encodeYear = (labeledYear) => {
   const matched = labeledYear.match(
-    /^(明治|大正|昭和|平成|令和)(\d+)年(\d+)月(\d+)日$/,
+    /^(明治|大正|昭和|平成|令和)(\d+|元)年(\d+)月(\d+)日$/,
   );
   if (!matched) return "";
 
   const [, era, year, month, day] = matched;
   const [eraCode] = ERA_CODE_MAP[era];
-  return `${eraCode}${padZero2(year)}${padZero2(month)}${padZero2(day)}`;
+  return `${eraCode}${year == "元" ? "01" : padZero2(year)}${padZero2(month)}${padZero2(day)}`;
 };
 
 /**
