@@ -158,3 +158,13 @@ HTML構造（`dl`/`dt`/`dd`など）のパースが不要になったため、�
 | `scrape` | 分ベース（数分おき） |
 | `encodePrecs` | 時間ベース（1時間おき） |
 | `checkSheetFilled` | 任意のタイミング（呼び出しごとに必ずメールを送るため、高頻度設定は避ける。1日1回程度を推奨） |
+
+## 開発手順
+
+使用ツール：[clasp](https://github.com/google/clasp)
+
+1. `npm install`
+1. Googleドライブ上にスクリプトを作成してURLからIDを取得
+1. スクリプトIDで `clasp clone （スクリプトID）`
+1. `clasp push` でローカルの変更をGASエディタに反映
+1. `clasp open-script` でGASエディタを開く
