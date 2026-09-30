@@ -164,7 +164,14 @@ HTML構造（`dl`/`dt`/`dd`など）のパースが不要になったため、�
 使用ツール：[clasp](https://github.com/google/clasp)
 
 1. `npm install`
-1. Googleドライブ上にスクリプトを作成してURLからIDを取得
-1. スクリプトIDで `clasp clone （スクリプトID）`
+1. Googleドライブ上にスクリプトを作成してURLからスクリプトIDを取得
+1. `.clasp.json` を以下の内容で作成して `（スクリプトID）` を書き換える
+
+    ```json
+    {
+      "scriptId": "（スクリプトID）",
+    }
+    ```
+
 1. `clasp push` でローカルの変更をGASエディタに反映
 1. `clasp open-script` でGASエディタを開く
